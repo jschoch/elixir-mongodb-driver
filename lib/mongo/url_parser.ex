@@ -21,6 +21,7 @@ defmodule Mongo.UrlParser do
     # Query options
     "replicaSet" => :string,
     "directConnection" => ["true", "false"],
+    "loadBalanced" => ["true", "false"],
     "loadBalancer" => ["true", "false"],
     "ssl" => ["true", "false"],
     "connectTimeoutMS" => :number,

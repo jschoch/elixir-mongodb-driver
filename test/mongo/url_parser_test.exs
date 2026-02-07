@@ -241,11 +241,23 @@ defmodule Mongo.UrlParserTest do
       end
     end
 
-    test "url with loadBalancer" do
+    test "url with loadBalancer alias" do
       for load_balancer <- ["true", "false"] do
         assert UrlParser.parse_url(url: "mongodb://seed1.domain.com:27017/db_name?loadBalancer=#{load_balancer}") == [
                  database: "db_name",
                  load_balanced: String.to_atom(load_balancer),
+                 seeds: [
+                   "seed1.domain.com:27017"
+                 ]
+               ]
+      end
+    end
+
+    test "url with official loadBalanced option" do
+      for load_balanced <- ["true", "false"] do
+        assert UrlParser.parse_url(url: "mongodb://seed1.domain.com:27017/db_name?loadBalanced=#{load_balanced}") == [
+                 database: "db_name",
+                 load_balanced: String.to_atom(load_balanced),
                  seeds: [
                    "seed1.domain.com:27017"
                  ]
