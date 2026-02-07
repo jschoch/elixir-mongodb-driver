@@ -15,21 +15,34 @@ defmodule Mongo.PasswordSafe do
   end
 
   def set_password(pid, password) do
-    GenServer.cast(pid, {:set, password})
+    GenServer.call(pid, {:set, password})
   end
 
   def get_password(nil), do: nil
 
+  def get_password(%{key: _key, pw: _pw} = sealed) do
+    unseal(sealed)
+  end
+
   def get_password(pid) do
     GenServer.call(pid, :get)
+  end
+
+  def seal(password) when is_binary(password) do
+    key = generate_key()
+    %{key: key, pw: encrypt(password, key)}
+  end
+
+  def unseal(%{key: key, pw: password}) do
+    decrypt(password, key)
   end
 
   def init([]) do
     {:ok, %{key: generate_key(), pw: nil}}
   end
 
-  def handle_cast({:set, password}, %{key: key} = data) do
-    {:noreply, %{data | pw: password |> encrypt(key)}}
+  def handle_call({:set, password}, _from, %{key: key} = data) do
+    {:reply, :ok, %{data | pw: password |> encrypt(key)}}
   end
 
   def handle_call(:get, _from, %{key: key, pw: password} = data) do

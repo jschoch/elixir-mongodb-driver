@@ -14,7 +14,7 @@ defmodule Mongo.TopologyDescription do
   alias Mongo.ReadPreference
 
   # see https://github.com/mongodb/specifications/blob/master/source/server-discovery-and-monitoring/server-discovery-and-monitoring.rst#topologydescription
-  @type type :: :unknown | :single | :replica_set_no_primary | :replica_set_with_primary | :sharded
+  @type type :: :unknown | :single | :replica_set_no_primary | :replica_set_with_primary | :sharded | :load_balanced
   @type t :: %{
           type: type,
           set_name: String.t() | nil,
@@ -56,7 +56,7 @@ defmodule Mongo.TopologyDescription do
   end
 
   def has_writable_server?(topology) do
-    topology.type in [:single, :sharded, :replica_set_with_primary]
+    topology.type in [:single, :sharded, :replica_set_with_primary, :load_balanced]
   end
 
   def update(topology, server_description, num_seeds) do
@@ -97,6 +97,9 @@ defmodule Mongo.TopologyDescription do
         :replica_set_with_primary ->
           primary_servers(topology)
 
+        :load_balanced ->
+          topology.servers
+
         _other ->
           []
       end
@@ -131,6 +134,9 @@ defmodule Mongo.TopologyDescription do
         :single ->
           server = pick_server(topology.servers)
           {server, ReadPreference.to_topology_single_type(server)}
+
+        :load_balanced ->
+          {pick_server(topology.servers), ReadPreference.to_mongos(read_preference)}
 
         :sharded ->
           {topology |> mongos_servers() |> pick_server(), ReadPreference.to_mongos(read_preference)}
@@ -172,9 +178,10 @@ defmodule Mongo.TopologyDescription do
   end
 
   def get_type(opts) do
-    case Keyword.get(opts, :direct_connection, false) do
-      true -> :single
-      false -> Keyword.get(opts, :type, :unknown)
+    cond do
+      Keyword.get(opts, :load_balanced, false) -> :load_balanced
+      Keyword.get(opts, :direct_connection, false) -> :single
+      true -> Keyword.get(opts, :type, :unknown)
     end
   end
 

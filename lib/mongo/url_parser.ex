@@ -21,6 +21,7 @@ defmodule Mongo.UrlParser do
     # Query options
     "replicaSet" => :string,
     "directConnection" => ["true", "false"],
+    "loadBalancer" => ["true", "false"],
     "ssl" => ["true", "false"],
     "connectTimeoutMS" => :number,
     "socketTimeoutMS" => :number,
@@ -51,6 +52,7 @@ defmodule Mongo.UrlParser do
     "heartbeatFrequencyMS" => :number,
     "retryWrites" => ["true", "false"],
     "tls" => ["true", "false"],
+    "tlsAllowInvalidCertificates" => ["true", "false"],
     "compressors" => @compressors,
     "uuidRepresentation" => ["standard", "csharpLegacy", "javaLegacy", "pythonLegacy"],
     # Elixir Driver options
@@ -60,7 +62,8 @@ defmodule Mongo.UrlParser do
   @driver_option_map %{
     max_pool_size: :pool_size,
     replica_set: :set_name,
-    w_timeout: :wtimeout
+    w_timeout: :wtimeout,
+    load_balancer: :load_balanced
   }
 
   defp parse_option_value(_key, ""), do: nil
@@ -195,13 +198,9 @@ defmodule Mongo.UrlParser do
         opts
 
       value ->
-        ## start GenServer and put id
-        with {:ok, pid} <- Mongo.PasswordSafe.start_link(),
-             :ok <- Mongo.PasswordSafe.set_password(pid, value) do
-          opts
-          |> Keyword.put(:password, "*****")
-          |> Keyword.put(:pw_safe, pid)
-        end
+        opts
+        |> Keyword.put(:password, "*****")
+        |> Keyword.put(:pw_safe, Mongo.PasswordSafe.seal(value))
     end
   end
 
@@ -219,6 +218,7 @@ defmodule Mongo.UrlParser do
     else
       _other -> opts
     end
+    |> apply_tls_allow_invalid_certificates()
     |> hide_password()
   end
 
@@ -243,6 +243,15 @@ defmodule Mongo.UrlParser do
       end
 
     Keyword.drop(opts, [:read_preference_tags, :max_staleness_seconds])
+  end
+
+  defp apply_tls_allow_invalid_certificates(opts) do
+    if Keyword.get(opts, :tls_allow_invalid_certificates, false) in [true, true] do
+      ssl_opts = Keyword.get(opts, :ssl_opts, [])
+      Keyword.put(opts, :ssl_opts, Keyword.put(ssl_opts, :verify, :verify_none))
+    else
+      opts
+    end
   end
 
   defp extend_read_preference_tags(read_preference, opts) do

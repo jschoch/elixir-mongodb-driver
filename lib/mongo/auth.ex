@@ -31,7 +31,22 @@ defmodule Mongo.Auth do
   defp credentials(opts) do
     username = opts[:username]
     pw_safe = opts[:pw_safe]
-    password = PasswordSafe.get_password(pw_safe)
+
+    password =
+      cond do
+        is_nil(pw_safe) ->
+          nil
+
+        is_map(pw_safe) ->
+          PasswordSafe.get_password(pw_safe)
+
+        is_pid(pw_safe) and Process.alive?(pw_safe) ->
+          PasswordSafe.get_password(pw_safe)
+
+        true ->
+          raise Mongo.Error.exception("authentication password safe is unavailable")
+      end
+
     {username, password}
   end
 

@@ -1777,7 +1777,12 @@ defmodule Mongo do
   ##
   # Checks for an error and broadcast the event.
   ##
-  defp check_for_error({%{"ok" => ok} = response, %{request_id: request_id, operation_id: operation_id, connection_id: connection_id} = event, flags, duration}, cmd, opts) when ok == 1 do
+  defp check_for_error(
+         {%{"ok" => ok} = response, %{request_id: request_id, operation_id: operation_id, connection_id: connection_id, service_id: service_id} = event, flags, duration},
+         cmd,
+         opts
+       )
+       when ok == 1 do
     Events.notify(
       %CommandSucceededEvent{
         reply: response,
@@ -1785,7 +1790,8 @@ defmodule Mongo do
         command_name: event.command_name,
         request_id: request_id,
         operation_id: operation_id,
-        connection_id: connection_id
+        connection_id: connection_id,
+        service_id: service_id
       },
       :commands
     )
@@ -1810,7 +1816,11 @@ defmodule Mongo do
     {:ok, {flags, response}}
   end
 
-  defp check_for_error({doc, %{request_id: request_id, operation_id: operation_id, connection_id: connection_id} = event, _flags, duration}, cmd, opts) do
+  defp check_for_error(
+         {doc, %{request_id: request_id, operation_id: operation_id, connection_id: connection_id, service_id: service_id} = event, _flags, duration},
+         cmd,
+         opts
+       ) do
     error = Mongo.Error.exception(doc)
 
     Events.notify(
@@ -1820,7 +1830,8 @@ defmodule Mongo do
         command_name: event.command_name,
         request_id: request_id,
         operation_id: operation_id,
-        connection_id: connection_id
+        connection_id: connection_id,
+        service_id: service_id
       },
       :commands
     )

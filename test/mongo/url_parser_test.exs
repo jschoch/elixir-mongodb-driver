@@ -240,5 +240,29 @@ defmodule Mongo.UrlParserTest do
                ]
       end
     end
+
+    test "url with loadBalancer" do
+      for load_balancer <- ["true", "false"] do
+        assert UrlParser.parse_url(url: "mongodb://seed1.domain.com:27017/db_name?loadBalancer=#{load_balancer}") == [
+                 database: "db_name",
+                 load_balanced: String.to_atom(load_balancer),
+                 seeds: [
+                   "seed1.domain.com:27017"
+                 ]
+               ]
+      end
+    end
+
+    test "url with tlsAllowInvalidCertificates" do
+      assert UrlParser.parse_url(url: "mongodb://seed1.domain.com:27017/db_name?tls=true&tlsAllowInvalidCertificates=true") == [
+               ssl_opts: [verify: :verify_none],
+               database: "db_name",
+               tls_allow_invalid_certificates: true,
+               tls: true,
+               seeds: [
+                 "seed1.domain.com:27017"
+               ]
+             ]
+    end
   end
 end

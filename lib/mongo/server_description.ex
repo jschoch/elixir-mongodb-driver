@@ -7,7 +7,7 @@ defmodule Mongo.ServerDescription do
   @retryable_wire_version Version.encode(:supports_op_msg)
 
   # see https://github.com/mongodb/specifications/blob/master/source/server-discovery-and-monitoring/server-discovery-and-monitoring.rst#serverdescription
-  @type type :: :standalone | :mongos | :possible_primary | :rs_primary | :rs_secondary | :rs_arbiter | :rs_other | :rs_ghost | :unknown
+  @type type :: :standalone | :mongos | :load_balancer | :possible_primary | :rs_primary | :rs_secondary | :rs_arbiter | :rs_other | :rs_ghost | :unknown
 
   @type compressor_types :: :zlib | :zstd
 
@@ -152,6 +152,7 @@ defmodule Mongo.ServerDescription do
 
   # see https://github.com/mongodb/specifications/blob/master/source/server-discovery-and-monitoring/server-discovery-and-monitoring.rst#type
   defp determine_server_type(%{"ok" => n}) when n != 1, do: :unknown
+  defp determine_server_type(%{"serviceId" => %BSON.ObjectId{}}), do: :load_balancer
   defp determine_server_type(%{"msg" => "isdbgrid"}), do: :mongos
   defp determine_server_type(%{"isreplicaset" => true}), do: :rs_ghost
 

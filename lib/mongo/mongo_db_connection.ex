@@ -40,9 +40,11 @@ defmodule Mongo.MongoDBConnection do
       server_pid: Keyword.get(opts, :server_pid),
       topology_pid: Keyword.fetch!(opts, :topology_pid),
       stable_api: Keyword.get(opts, :stable_api),
-      use_op_msg: Keyword.get(opts, :stable_api) != nil,
-      hello_ok: Keyword.get(opts, :stable_api) != nil,
-      ssl: opts[:ssl] || opts[:tls] || false
+      load_balanced: Keyword.get(opts, :load_balanced, false),
+      use_op_msg: Keyword.get(opts, :stable_api) != nil or Keyword.get(opts, :load_balanced, false),
+      hello_ok: Keyword.get(opts, :stable_api) != nil or Keyword.get(opts, :load_balanced, false),
+      ssl: opts[:ssl] || opts[:tls] || false,
+      service_id: nil
     }
 
     connect(opts, state)
@@ -217,10 +219,34 @@ defmodule Mongo.MongoDBConnection do
 
     case Utils.command(-1, cmd, state) do
       {:ok, _flags, %{"ok" => ok, "maxWireVersion" => version} = response} when ok == 1 ->
-        {:ok, %{state | wire_version: version, use_op_msg: version >= 6, hello_ok: Map.get(response, "helloOk", false)}}
+        with :ok <- validate_load_balanced_handshake(response, state) do
+          {:ok,
+           %{
+             state
+             | wire_version: version,
+               use_op_msg: state.load_balanced or version >= 6,
+               hello_ok: state.load_balanced or Map.get(response, "helloOk", false),
+               service_id: Map.get(response, "serviceId")
+           }}
+        else
+          {:error, reason} ->
+            {:disconnect, reason, state}
+        end
 
-      {:ok, _flags, %{"ok" => ok}} when ok == 1 ->
-        {:ok, %{state | wire_version: 0}}
+      {:ok, _flags, %{"ok" => ok} = response} when ok == 1 ->
+        with :ok <- validate_load_balanced_handshake(response, state) do
+          {:ok,
+           %{
+             state
+             | wire_version: 0,
+               use_op_msg: state.load_balanced,
+               hello_ok: state.load_balanced,
+               service_id: Map.get(response, "serviceId")
+           }}
+        else
+          {:error, reason} ->
+            {:disconnect, reason, state}
+        end
 
       {:ok, _flags, %{"ok" => ok, "errmsg" => msg, "code" => code}} when ok == 0 ->
         err = Mongo.Error.exception(message: msg, code: code)
@@ -303,7 +329,8 @@ defmodule Mongo.MongoDBConnection do
       database_name: db,
       request_id: state.request_id,
       operation_id: opts[:operation_id],
-      connection_id: self()
+      connection_id: self(),
+      service_id: state.service_id
     }
 
     Events.notify(event, :commands)
@@ -369,7 +396,8 @@ defmodule Mongo.MongoDBConnection do
       database_name: db,
       request_id: state.request_id,
       operation_id: opts[:operation_id],
-      connection_id: self()
+      connection_id: self(),
+      service_id: state.service_id
     }
 
     Events.notify(event, :commands)
@@ -406,7 +434,8 @@ defmodule Mongo.MongoDBConnection do
       database_name: opts[:database] || state.database,
       request_id: state.request_id,
       operation_id: opts[:operation_id],
-      connection_id: self()
+      connection_id: self(),
+      service_id: state.service_id
     }
 
     flags = Keyword.take(opts, @find_one_flags)
@@ -458,6 +487,10 @@ defmodule Mongo.MongoDBConnection do
     end)
   end
 
+  defp handshake_command(%{load_balanced: true}, client, compression) do
+    [hello: 1, helloOk: true, loadBalanced: true, client: client, compression: compression]
+  end
+
   defp handshake_command(%{stable_api: nil}, client, compression) do
     [ismaster: 1, helloOk: true, client: client, compression: compression]
   end
@@ -468,15 +501,33 @@ defmodule Mongo.MongoDBConnection do
     |> Keyword.put(:hello, 1)
   end
 
-  defp hello_command(cmd, %{hello_ok: false}) do
+  defp hello_command(cmd, %{hello_ok: false} = state) do
     cmd
     |> Keyword.put(:helloOk, true)
     |> Keyword.put(:ismaster, 1)
+    |> maybe_add_load_balanced(state)
   end
 
-  defp hello_command(cmd, %{hello_ok: true, stable_api: stable_api}) do
+  defp hello_command(cmd, %{hello_ok: true, stable_api: stable_api} = state) do
     cmd
     |> StableVersion.merge_stable_api(stable_api)
     |> Keyword.put(:hello, 1)
+    |> maybe_add_load_balanced(state)
+  end
+
+  defp maybe_add_load_balanced(cmd, %{load_balanced: true}) do
+    Keyword.put(cmd, :loadBalanced, true)
+  end
+
+  defp maybe_add_load_balanced(cmd, _state), do: cmd
+
+  defp validate_load_balanced_handshake(_response, %{load_balanced: false}), do: :ok
+
+  defp validate_load_balanced_handshake(response, %{load_balanced: true}) do
+    if Map.has_key?(response, "serviceId") do
+      :ok
+    else
+      {:error, Mongo.Error.exception(message: "load balanced handshake response missing required serviceId")}
+    end
   end
 end

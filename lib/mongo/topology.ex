@@ -85,8 +85,14 @@ defmodule Mongo.Topology do
   end
 
   def mark_server_unknown(pid, address) do
-    server_description = ServerDescription.parse_hello_response(address, "not writable primary or recovering")
-    update_server_description(pid, server_description)
+    case topology(pid) do
+      %{type: :load_balanced} ->
+        :ok
+
+      _other ->
+        server_description = ServerDescription.parse_hello_response(address, "not writable primary or recovering")
+        update_server_description(pid, server_description)
+    end
   end
 
   def limits(pid) do
@@ -126,11 +132,14 @@ defmodule Mongo.Topology do
       type == :single and length(seeds) > 1 ->
         {:stop, :single_topology_multiple_hosts}
 
+      type == :load_balanced and length(seeds) > 1 ->
+        {:stop, :load_balanced_topology_multiple_hosts}
+
       set_name != nil and type not in [:unknown, :replica_set_no_primary, :single] ->
         {:stop, :set_name_bad_topology}
 
       true ->
-        servers = servers_from_seeds(seeds)
+        servers = servers_from_seeds(seeds, type)
 
         state =
           %{
@@ -150,6 +159,7 @@ defmodule Mongo.Topology do
             waiting_pids: []
           }
           |> update_monitor()
+          |> maybe_start_load_balanced_pool()
 
         {:ok, state}
     end
@@ -542,25 +552,29 @@ defmodule Mongo.Topology do
   # update the monitor process. For new servers the function creates new monitor processes.
   #
   defp update_monitor(%{topology: %{heartbeat_frequency_ms: heartbeat_frequency_ms}} = state) do
-    arbiters = fetch_arbiters(state)
-    old_addrs = Map.keys(state.monitors)
-    # remove arbiters from connection pool as descriptions are received
-    new_addrs = Map.keys(state.topology.servers) -- arbiters
+    if state.topology.type == :load_balanced do
+      Enum.reduce(Map.keys(state.monitors), state, &remove_address/2)
+    else
+      arbiters = fetch_arbiters(state)
+      old_addrs = Map.keys(state.monitors)
+      # remove arbiters from connection pool as descriptions are received
+      new_addrs = Map.keys(state.topology.servers) -- arbiters
 
-    added = new_addrs -- old_addrs
-    removed = old_addrs -- new_addrs
+      added = new_addrs -- old_addrs
+      removed = old_addrs -- new_addrs
 
-    state =
-      Enum.reduce(added, state, fn address, state ->
-        server_description = state.topology.servers[address]
-        connopts = connect_opts_from_address(state.opts, address)
-        args = [server_description.address, self(), heartbeat_frequency_ms, Keyword.put(connopts, :pool, DBConnection.ConnectionPool)]
-        {:ok, pid} = Monitor.start_link(args)
+      state =
+        Enum.reduce(added, state, fn address, state ->
+          server_description = state.topology.servers[address]
+          connopts = connect_opts_from_address(state.opts, address)
+          args = [server_description.address, self(), heartbeat_frequency_ms, Keyword.put(connopts, :pool, DBConnection.ConnectionPool)]
+          {:ok, pid} = Monitor.start_link(args)
 
-        %{state | monitors: Map.put(state.monitors, address, pid)}
-      end)
+          %{state | monitors: Map.put(state.monitors, address, pid)}
+        end)
 
-    Enum.reduce(removed, state, &remove_address/2)
+      Enum.reduce(removed, state, &remove_address/2)
+    end
   end
 
   defp update_session_pool(%{session_pool: nil, opts: opts} = state, logical_session_timeout) do
@@ -576,18 +590,50 @@ defmodule Mongo.Topology do
   end
 
   defp maybe_reinit(state) do
-    servers = servers_from_seeds(state.seeds)
+    servers = servers_from_seeds(state.seeds, state.topology.type)
 
     GenServer.cast(self(), :reconcile)
 
     put_in(state, [:topology, :servers], servers)
   end
 
-  defp servers_from_seeds(seeds) do
+  defp servers_from_seeds(seeds, :load_balanced) do
+    for addr <- seeds, into: %{} do
+      {addr, ServerDescription.defaults(%{address: addr, type: :load_balancer})}
+    end
+  end
+
+  defp servers_from_seeds(seeds, _type) do
     for addr <- seeds, into: %{} do
       {addr, ServerDescription.defaults(%{address: addr, type: :unknown})}
     end
   end
+
+  defp maybe_start_load_balanced_pool(%{topology: %{type: :load_balanced}} = state) do
+    address = hd(state.seeds)
+
+    conn_opts =
+      state.opts
+      |> Keyword.put(:connection_type, :client)
+      |> Keyword.put(:topology_pid, self())
+      |> connect_opts_from_address(address)
+
+    {:ok, pool} = DBConnection.start_link(Mongo.MongoDBConnection, conn_opts)
+
+    session_pool =
+      case state.session_pool do
+        nil -> SessionPool.new(30, state.opts)
+        pool -> pool
+      end
+
+    %{
+      state
+      | connection_pools: replace_pool(state.connection_pools, address, pool),
+        session_pool: session_pool
+    }
+  end
+
+  defp maybe_start_load_balanced_pool(state), do: state
 
   defp remove_address(address, state) do
     case state.monitors[address] do

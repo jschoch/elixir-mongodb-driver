@@ -24,7 +24,9 @@ defmodule Mongo.Events do
       :operation_id,
       ## as bulk write operations. OPTIONAL.
       ## Returns the connection id for the command. For languages that do not have this,
-      :connection_id
+      :connection_id,
+      ## In load-balanced mode, includes the serviceId from hello.
+      :service_id
       ## this MUST return the driver equivalent which MUST include the server address and port.
       ## The name of this field is flexible to match the object that is returned from the drive
     ]
@@ -49,7 +51,9 @@ defmodule Mongo.Events do
       :operation_id,
       ## as bulk write operations. OPTIONAL.
       ## Returns the connection id for the command. For languages that do not have this,
-      :connection_id
+      :connection_id,
+      ## In load-balanced mode, includes the serviceId from hello.
+      :service_id
       ## this MUST return the driver equivalent which MUST include the server address and port.
       ## The name of this field is flexible to match the object that is returned from the driver.
     ]
@@ -75,7 +79,9 @@ defmodule Mongo.Events do
       :operation_id,
       ## as bulk write operations. OPTIONAL.
       ## Returns the connection id for the command. For languages that do not have this,
-      :connection_id
+      :connection_id,
+      ## In load-balanced mode, includes the serviceId from hello.
+      :service_id
       ## this MUST return the driver equivalent which MUST include the server address and port.
       ## The name of this field is flexible to match the object that is returned from the driver.
     ]
